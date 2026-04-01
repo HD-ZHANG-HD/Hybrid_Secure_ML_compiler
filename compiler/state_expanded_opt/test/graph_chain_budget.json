@@ -1,0 +1,38 @@
+{
+  "graph_id": "chain_budget",
+  "nodes": [
+    {
+      "node_id": "n1",
+      "op_type": "LayerNorm",
+      "input_shape": [1, 8, 768],
+      "output_shape": [1, 8, 768],
+      "attributes": {"stage": "pre_ffn"}
+    },
+    {
+      "node_id": "n2",
+      "op_type": "FFN_Linear_1",
+      "input_shape": [1, 8, 768],
+      "output_shape": [1, 8, 64],
+      "attributes": {"out_dim": 64}
+    },
+    {
+      "node_id": "n3",
+      "op_type": "GeLU",
+      "input_shape": [1, 8, 64],
+      "output_shape": [1, 8, 64],
+      "attributes": {}
+    },
+    {
+      "node_id": "n4",
+      "op_type": "FFN_Linear_2",
+      "input_shape": [1, 8, 64],
+      "output_shape": [1, 8, 768],
+      "attributes": {"hidden_size": 64, "out_dim": 768}
+    }
+  ],
+  "edges": [
+    {"src": "n1", "dst": "n2", "tensor_shape": [1, 8, 768]},
+    {"src": "n2", "dst": "n3", "tensor_shape": [1, 8, 64]},
+    {"src": "n3", "dst": "n4", "tensor_shape": [1, 8, 64]}
+  ]
+}

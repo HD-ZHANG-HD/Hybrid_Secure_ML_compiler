@@ -1,0 +1,38 @@
+{
+  "graph_id": "chain_reset_preferred",
+  "nodes": [
+    {
+      "node_id": "r1",
+      "op_type": "LayerNorm",
+      "input_shape": [1, 16, 768],
+      "output_shape": [1, 16, 768],
+      "attributes": {"stage": "pre_ffn"}
+    },
+    {
+      "node_id": "r2",
+      "op_type": "FFN_Linear_1",
+      "input_shape": [1, 16, 768],
+      "output_shape": [1, 16, 64],
+      "attributes": {"out_dim": 64}
+    },
+    {
+      "node_id": "r3",
+      "op_type": "GeLU",
+      "input_shape": [1, 16, 64],
+      "output_shape": [1, 16, 64],
+      "attributes": {}
+    },
+    {
+      "node_id": "r4",
+      "op_type": "FFN_Linear_2",
+      "input_shape": [1, 16, 64],
+      "output_shape": [1, 16, 768],
+      "attributes": {"hidden_size": 64, "out_dim": 768}
+    }
+  ],
+  "edges": [
+    {"src": "r1", "dst": "r2", "tensor_shape": [1, 16, 768]},
+    {"src": "r2", "dst": "r3", "tensor_shape": [1, 16, 64]},
+    {"src": "r3", "dst": "r4", "tensor_shape": [1, 16, 64]}
+  ]
+}

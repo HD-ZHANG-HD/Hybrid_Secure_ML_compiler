@@ -1,0 +1,39 @@
+{
+  "graph_id": "residual_stage_local",
+  "nodes": [
+    {
+      "node_id": "m1",
+      "op_type": "LayerNorm",
+      "input_shape": [1, 8, 768],
+      "output_shape": [1, 8, 768],
+      "attributes": {"stage": "pre_ffn"}
+    },
+    {
+      "node_id": "m2",
+      "op_type": "FFN_Linear_1",
+      "input_shape": [1, 8, 768],
+      "output_shape": [1, 8, 64],
+      "attributes": {"out_dim": 64}
+    },
+    {
+      "node_id": "m3",
+      "op_type": "FFN_Linear_2",
+      "input_shape": [1, 8, 64],
+      "output_shape": [1, 8, 768],
+      "attributes": {"hidden_size": 64, "out_dim": 768}
+    },
+    {
+      "node_id": "m4",
+      "op_type": "Residual_Add",
+      "input_shape": [1, 8, 768],
+      "output_shape": [1, 8, 768],
+      "attributes": {"inputs": 2, "stage": "ffn_residual"}
+    }
+  ],
+  "edges": [
+    {"src": "m1", "dst": "m2", "tensor_shape": [1, 8, 768]},
+    {"src": "m2", "dst": "m3", "tensor_shape": [1, 8, 64]},
+    {"src": "m3", "dst": "m4", "tensor_shape": [1, 8, 768]},
+    {"src": "m1", "dst": "m4", "tensor_shape": [1, 8, 768]}
+  ]
+}

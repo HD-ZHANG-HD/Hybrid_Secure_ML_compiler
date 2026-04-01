@@ -26,10 +26,18 @@ class ConversionStep:
     output_tensor: str | None = None
 
 
-ExecutionStep = OperatorStep | ConversionStep
+@dataclass(frozen=True)
+class BootstrapStep:
+    type: Literal["bootstrap"] = "bootstrap"
+    backend: BackendType = BackendType.HE
+    tensor: str = ""
+    method: str = "method_default"
+    output_tensor: str | None = None
+
+
+ExecutionStep = OperatorStep | ConversionStep | BootstrapStep
 
 
 @dataclass(frozen=True)
 class ExecutionPlan:
     steps: List[ExecutionStep]
-
