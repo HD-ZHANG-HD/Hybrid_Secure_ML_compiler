@@ -178,3 +178,20 @@ def run_bert_bolt_gelu_mpc(x: np.ndarray, ctx: ExecutionContext | None = None, c
     _log(ctx, "[gelu_wrapper] recombine_success=True")
     return y
 
+
+# -- cost signature -----------------------------------------------------------
+
+from operators._cost_signature import OperatorCostSignature, mpc_signature
+
+
+def cost_signature(input_shape, output_shape=None, ctx=None) -> OperatorCostSignature:
+    del ctx
+    out = output_shape if output_shape is not None else input_shape
+    return mpc_signature(
+        "GeLU",
+        input_shape=input_shape,
+        output_shape=out,
+        feasible=True,
+        notes="BOLT_GELU_BRIDGE: NonLinear::gelu (SCI)",
+    )
+

@@ -73,3 +73,51 @@ def run_nexus_layernorm_he(
             eps=cfg.eps,
         ),
     )
+
+
+# -- cost signature -----------------------------------------------------------
+
+from operators._cost_signature import OperatorCostSignature, bs_product, he_signature
+
+
+LAYERNORM_HE_LEVEL_DELTA = 3  # mean-square + inv-sqrt
+LAYERNORM_HE_MAX_BS = 16
+LAYERNORM_HE_HIDDEN = 768
+LAYERNORM_HE_NOTES = (
+    "NEXUS LayerNorm restricted contract: B*S<=16, hidden=768, no affine params."
+)
+
+
+def cost_signature(input_shape, output_shape=None, ctx=None) -> OperatorCostSignature:
+    out = output_shape if output_shape is not None else input_shape
+    in_shape = tuple(int(d) for d in input_shape)
+    feasible = True
+    reason = LAYERNORM_HE_NOTES
+    if len(in_shape) != 3 or in_shape[-1] != LAYERNORM_HE_HIDDEN:
+        feasible = False
+        reason = f"LayerNorm HE requires [B,S,{LAYERNORM_HE_HIDDEN}]; got {in_shape}"
+    elif bs_product(in_shape) > LAYERNORM_HE_MAX_BS:
+        feasible = False
+        reason = f"LayerNorm HE requires B*S<={LAYERNORM_HE_MAX_BS}; got {bs_product(in_shape)}"
+    # affine params are forbidden by the restricted contract
+    if feasible and ctx is not None:
+        if ctx.params.get("layernorm_weight") is not None or ctx.params.get("layernorm_bias") is not None:
+            feasible = False
+            reason = "LayerNorm HE restricted contract forbids affine weight/bias"
+    return he_signature(
+        "LayerNorm",
+        input_shape=in_shape,
+        output_shape=out,
+        level_delta=LAYERNORM_HE_LEVEL_DELTA,
+        bootstrap_supported=False,
+        feasible=feasible,
+        notes=reason,
+    )
+
+
+def bootstrap(tensor: np.ndarray, ctx: ExecutionContext | None = None) -> np.ndarray:
+    from operators._cost_signature import BootstrapUnsupportedError
+    raise BootstrapUnsupportedError(
+        "LayerNorm.method_he_nexus cannot bootstrap in place; "
+        "solver must detour through HE->MPC->HE."
+    )

@@ -67,3 +67,57 @@ def run_nexus_attention_v_matmul_he(
         ),
         return_canonical=return_canonical,
     )
+
+
+# -- cost signature -----------------------------------------------------------
+
+from operators._cost_signature import OperatorCostSignature, he_signature
+
+
+ATTENTION_V_HE_LEVEL_DELTA = 1
+ATTENTION_V_HE_HIDDEN = 768
+ATTENTION_V_HE_MAX_BATCH = 8
+ATTENTION_V_HE_MAX_SEQ = 128
+ATTENTION_V_HE_NOTES = (
+    "NEXUS attention V: packed_qkv [3,B,S,768] + attn_probs [B,12,S,S]; "
+    "1<=B<=8, 1<=S<=128, 12 heads."
+)
+
+
+def cost_signature(input_shape, output_shape=None, ctx=None) -> OperatorCostSignature:
+    del ctx
+    # input_shape convention: the packed qkv shape [3,B,S,768]
+    in_shape = tuple(int(d) for d in input_shape)
+    feasible = True
+    reason = ATTENTION_V_HE_NOTES
+    if len(in_shape) != 4 or in_shape[0] != 3 or in_shape[-1] != ATTENTION_V_HE_HIDDEN:
+        feasible = False
+        reason = (
+            f"Attention_V_MatMul HE requires packed [3,B,S,{ATTENTION_V_HE_HIDDEN}]; "
+            f"got {in_shape}"
+        )
+    else:
+        b, s = in_shape[1], in_shape[2]
+        if not (1 <= b <= ATTENTION_V_HE_MAX_BATCH and 1 <= s <= ATTENTION_V_HE_MAX_SEQ):
+            feasible = False
+            reason = (
+                f"Attention_V_MatMul HE requires 1<=B<={ATTENTION_V_HE_MAX_BATCH}, "
+                f"1<=S<={ATTENTION_V_HE_MAX_SEQ}; got B={b}, S={s}"
+            )
+    out_shape = output_shape if output_shape is not None else in_shape
+    return he_signature(
+        "Attention_V_MatMul",
+        input_shape=in_shape,
+        output_shape=out_shape,
+        level_delta=ATTENTION_V_HE_LEVEL_DELTA,
+        bootstrap_supported=False,
+        feasible=feasible,
+        notes=reason,
+    )
+
+
+def bootstrap(tensor: np.ndarray, ctx: ExecutionContext | None = None) -> np.ndarray:
+    from operators._cost_signature import BootstrapUnsupportedError
+    raise BootstrapUnsupportedError(
+        "Attention_V_MatMul.method_he_nexus cannot bootstrap in place."
+    )

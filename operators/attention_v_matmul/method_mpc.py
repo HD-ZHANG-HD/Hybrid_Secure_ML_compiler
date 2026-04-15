@@ -312,3 +312,21 @@ def run_bert_bolt_attention_v_matmul_mpc(
 
     raise RuntimeError(f"Attention_V wrapper failed after retries. Last error: {last_error}")
 
+
+# -- cost signature -----------------------------------------------------------
+
+from operators._cost_signature import OperatorCostSignature, mpc_signature
+
+
+def cost_signature(input_shape, output_shape=None, ctx=None) -> OperatorCostSignature:
+    del ctx
+    in_shape = tuple(int(d) for d in input_shape)
+    out = output_shape if output_shape is not None else in_shape
+    return mpc_signature(
+        "Attention_V_MatMul",
+        input_shape=in_shape,
+        output_shape=out,
+        feasible=True,
+        notes="BOLT_ATTN_V_MATMUL_MPC_BRIDGE: NonLinear::n_matrix_mul_iron (SCI)",
+    )
+

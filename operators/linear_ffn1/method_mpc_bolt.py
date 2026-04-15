@@ -189,3 +189,109 @@ def run_bert_bolt_ffn_linear1_mpc(
 
     raise RuntimeError(f"FFN_Linear_1 wrapper failed after retries. Last error: {last_error}")
 
+
+# -- chunking wrapper ---------------------------------------------------------
+#
+# The BOLT_FFN_LINEAR1_BRIDGE path hard-limits `n = B*S <= 64` because the
+# SCI bert_bolt NonLinear kernel statically allocates thread/pack arrays.
+# The compiler/model-level shape for BERT-base is B=1, S=128, which violates
+# the bridge's limit. This helper splits the flattened token dimension into
+# chunks of at most 64 tokens, invokes the single-shot primitive per chunk,
+# and reassembles the output. No new cryptographic primitive is introduced —
+# the weights/bias are regenerated deterministically per-chunk from the same
+# seed so the chunks share parameters and match the single-shot semantics.
+
+CHUNK_MAX_N: int = 64
+
+
+def run_bert_bolt_ffn_linear1_mpc_chunked(
+    x: np.ndarray,
+    out_dim: int,
+    ctx: ExecutionContext | None = None,
+    cfg: BertBoltFfnLinear1Config | None = None,
+    chunk_size: int = CHUNK_MAX_N,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Chunked FFN_Linear_1 MPC wrapper.
+
+    - Splits `n = B*S` into blocks of `<= chunk_size` tokens.
+    - Calls `run_bert_bolt_ffn_linear1_mpc` per chunk.
+    - Reassembles and returns `(y, w, bias)` with `y` shape `[B,S,out_dim]`.
+
+    Keeps `(w, bias)` identical across chunks because every chunk uses the
+    same `cfg.weight_seed`.
+    """
+    cfg = cfg or BertBoltFfnLinear1Config()
+    x = np.asarray(x, dtype=np.float64)
+    if x.ndim != 3:
+        raise ValueError(f"FFN_Linear_1 chunked wrapper expects [B,S,H], got {x.shape}")
+    if chunk_size <= 0 or chunk_size > CHUNK_MAX_N:
+        raise ValueError(
+            f"chunk_size must be in [1,{CHUNK_MAX_N}]; got {chunk_size}"
+        )
+    bsz, seq, h = x.shape
+    n = bsz * seq
+    if n <= chunk_size:
+        return run_bert_bolt_ffn_linear1_mpc(x, out_dim, ctx=ctx, cfg=cfg)
+
+    x2d = x.reshape(n, h)
+    pieces: list[np.ndarray] = []
+    w_ref: np.ndarray | None = None
+    b_ref: np.ndarray | None = None
+
+    _log(
+        ctx,
+        f"[ffn_linear1_chunked] n={n} h={h} out={out_dim} chunk_size={chunk_size} "
+        f"num_chunks={(n + chunk_size - 1) // chunk_size}",
+    )
+
+    for start in range(0, n, chunk_size):
+        end = min(start + chunk_size, n)
+        block = x2d[start:end].reshape(1, end - start, h)
+        y_block, w, bias = run_bert_bolt_ffn_linear1_mpc(
+            block, out_dim=out_dim, ctx=ctx, cfg=cfg
+        )
+        # chunks share seed so weights match; capture once and validate
+        if w_ref is None:
+            w_ref = w
+            b_ref = bias
+        else:
+            if not np.array_equal(w, w_ref) or not np.array_equal(bias, b_ref):
+                raise RuntimeError(
+                    "FFN_Linear_1 chunked wrapper: per-chunk weights diverged; "
+                    "check weight_seed determinism."
+                )
+        pieces.append(y_block.reshape(end - start, out_dim))
+
+    y_flat = np.concatenate(pieces, axis=0)
+    y = y_flat.reshape(bsz, seq, out_dim)
+    assert w_ref is not None and b_ref is not None
+    return y, w_ref, b_ref
+
+
+# -- cost signature -----------------------------------------------------------
+
+from operators._cost_signature import OperatorCostSignature, bs_product, mpc_signature
+
+
+def cost_signature(input_shape, output_shape=None, ctx=None) -> OperatorCostSignature:
+    """MPC FFN_Linear_1 is always feasible via the chunked wrapper."""
+    del ctx
+    in_shape = tuple(int(d) for d in input_shape)
+    out = output_shape if output_shape is not None else in_shape
+    n = bs_product(in_shape) if len(in_shape) >= 2 else 1
+    return mpc_signature(
+        "FFN_Linear_1",
+        input_shape=in_shape,
+        output_shape=out,
+        feasible=True,
+        notes=(
+            "BOLT_FFN_LINEAR1_BRIDGE: NonLinear::n_matrix_mul_iron; "
+            f"chunked in blocks of <= {CHUNK_MAX_N} tokens (n={n})."
+        ),
+        extras={
+            "chunked": n > CHUNK_MAX_N,
+            "num_chunks": (n + CHUNK_MAX_N - 1) // CHUNK_MAX_N,
+            "chunk_size": CHUNK_MAX_N,
+        },
+    )
+

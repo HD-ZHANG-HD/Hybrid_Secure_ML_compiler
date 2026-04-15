@@ -42,6 +42,49 @@ def _method_valid(node: OperatorNode, domain: Domain) -> bool:
     return default_capability_checker.is_method_valid(node.op_type, method, node.input_shape, node.attributes)
 
 
+def _he_feasible(node: OperatorNode, cost_model: StateExpandedCostModel) -> bool:
+    """Per-node HE feasibility gate (Section D).
+
+    Consults the method's `cost_signature()` via `cost_model.feasible()` so
+    that HE branches for BERT-base LayerNorm (B*S>16), out-of-contract
+    Attention (S>128), etc. are pruned at graph construction rather than
+    paid as infinite cost. Falls back to `_method_valid` for nodes whose
+    method has no registered cost signature.
+    """
+    if not _method_valid(node, "HE"):
+        return False
+    feasible_fn = getattr(cost_model, "feasible", None)
+    if feasible_fn is None:
+        return True
+    try:
+        return bool(feasible_fn(node, "HE"))
+    except Exception:
+        return True
+
+
+def _he_method_bootstrap_supported(node: OperatorNode) -> bool:
+    """Return True if this operator's HE method reports bootstrap support.
+
+    Used by the chain solver: when the direct HE-execute transition is
+    infeasible for level reasons AND bootstrap is unsupported, the solver
+    must detour through MPC rather than emit a fake bootstrap step.
+    """
+    try:
+        from compiler.cost_model import cost_signature_for_method, default_method_for
+
+        method = default_method_for(node.op_type, "HE")
+        if method is None:
+            return False
+        sig = cost_signature_for_method(
+            node.op_type, method, node.input_shape, node.output_shape
+        )
+        if sig is None:
+            return False
+        return bool(sig.he_bootstrap_supported)
+    except Exception:
+        return False
+
+
 def _make_action(
     step_id: int,
     kind: str,
@@ -135,9 +178,16 @@ def _enumerate_chain_transitions(
     step_id: int,
 ) -> tuple[List[tuple[State, List[ActionRecord], float]], int]:
     transitions: List[tuple[State, List[ActionRecord], float]] = []
-    if state.domain == "HE" and _method_valid(node, "HE"):
+    # Feasibility gate: the direct HE-execute transition is only
+    # considered when the method can actually run at this node's shape
+    # (cost_signature().feasible). Previously an infeasible HE branch
+    # would silently price through.
+    he_feasible = _he_feasible(node, cost_model)
+    if state.domain == "HE" and he_feasible:
         delta = cost_model.level_delta(node, "HE")
         op_cost = cost_model.operator_cost(node, "HE").latency_ms
+        # Strict l >= delta enforcement: only emit the direct execute
+        # transition when the level budget actually covers the op.
         if state.level_bucket is not None and state.level_bucket >= delta:
             next_state = State(position=state.position + 1, domain="HE", level_bucket=state.level_bucket - delta)
             transitions.append((
@@ -146,18 +196,27 @@ def _enumerate_chain_transitions(
                 op_cost,
             ))
             step_id += 1
-        bootstrap_cost = cost_model.bootstrap_cost(node).latency_ms
-        boot_state = State(position=state.position, domain="HE", level_bucket=cost_model.max_level())
-        next_state = State(position=state.position + 1, domain="HE", level_bucket=cost_model.max_level() - delta)
-        transitions.append((
-            next_state,
-            [
-                _make_action(step_id, "bootstrap", node, bootstrap_cost, "budget_reset", state, boot_state),
-                _make_action(step_id + 1, "execute_he", node, op_cost, "execute_after_bootstrap", boot_state, next_state),
-            ],
-            bootstrap_cost + op_cost,
-        ))
-        step_id += 2
+        # Bootstrap-then-execute path is only offered when the op's HE
+        # method actually supports in-place bootstrap. If not, the solver
+        # must pay the HE->MPC->HE detour (handled below via the
+        # conversion transition).
+        if _he_method_bootstrap_supported(node):
+            bootstrap_cost = cost_model.bootstrap_cost(node).latency_ms
+            boot_state = State(position=state.position, domain="HE", level_bucket=cost_model.max_level())
+            next_state = State(position=state.position + 1, domain="HE", level_bucket=cost_model.max_level() - delta)
+            transitions.append((
+                next_state,
+                [
+                    _make_action(step_id, "bootstrap", node, bootstrap_cost, "budget_reset", state, boot_state),
+                    _make_action(step_id + 1, "execute_he", node, op_cost, "execute_after_bootstrap", boot_state, next_state),
+                ],
+                bootstrap_cost + op_cost,
+            ))
+            step_id += 2
+    if state.domain == "HE":
+        # HE->MPC->execute detour is always considered when an MPC method
+        # exists, regardless of HE feasibility; this is how the solver
+        # escapes infeasible HE shapes (Section D).
         conv_cost = cost_model.conversion_cost(node.input_shape, "HE", "MPC").latency_ms
         conv_state = State(position=state.position, domain="MPC", level_bucket=None)
         next_state = State(position=state.position + 1, domain="MPC", level_bucket=None)
@@ -182,7 +241,7 @@ def _enumerate_chain_transitions(
             op_cost,
         ))
         step_id += 1
-    if state.domain == "MPC" and _method_valid(node, "HE"):
+    if state.domain == "MPC" and he_feasible:
         conv_cost = cost_model.conversion_cost(node.input_shape, "MPC", "HE").latency_ms
         delta = cost_model.level_delta(node, "HE")
         op_cost = cost_model.operator_cost(node, "HE").latency_ms
@@ -238,7 +297,7 @@ def _choose_stage_local_node_plan(
     step_id: int,
 ) -> tuple[State, List[ActionRecord], float, NodeExecution, Dict[str, object], int]:
     candidate_domains: List[Domain] = []
-    if _method_valid(node, "HE"):
+    if _he_feasible(node, cost_model):
         candidate_domains.append("HE")
     if _method_valid(node, "MPC"):
         candidate_domains.append("MPC")

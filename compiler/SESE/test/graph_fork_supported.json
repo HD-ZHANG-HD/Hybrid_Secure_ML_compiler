@@ -1,0 +1,30 @@
+{
+  "graph_id": "fork_supported",
+  "nodes": [
+    {
+      "node_id": "f1",
+      "op_type": "LayerNorm",
+      "input_shape": [1, 8, 768],
+      "output_shape": [1, 8, 768],
+      "attributes": {"stage": "shared_input"}
+    },
+    {
+      "node_id": "f2",
+      "op_type": "FFN_Linear_1",
+      "input_shape": [1, 8, 768],
+      "output_shape": [1, 8, 64],
+      "attributes": {"out_dim": 64}
+    },
+    {
+      "node_id": "f3",
+      "op_type": "LayerNorm",
+      "input_shape": [1, 8, 768],
+      "output_shape": [1, 8, 768],
+      "attributes": {"stage": "side_branch"}
+    }
+  ],
+  "edges": [
+    {"src": "f1", "dst": "f2", "tensor_shape": [1, 8, 768]},
+    {"src": "f1", "dst": "f3", "tensor_shape": [1, 8, 768]}
+  ]
+}

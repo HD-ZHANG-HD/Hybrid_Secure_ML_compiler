@@ -213,3 +213,20 @@ def run_bert_bolt_layernorm_mpc(
 
     raise RuntimeError(f"LayerNorm wrapper failed after retries. Last error: {last_error}")
 
+
+# -- cost signature -----------------------------------------------------------
+
+from operators._cost_signature import OperatorCostSignature, mpc_signature
+
+
+def cost_signature(input_shape, output_shape=None, ctx=None) -> OperatorCostSignature:
+    del ctx
+    out = output_shape if output_shape is not None else input_shape
+    return mpc_signature(
+        "LayerNorm",
+        input_shape=input_shape,
+        output_shape=out,
+        feasible=True,
+        notes="BOLT_LAYERNORM_BRIDGE: NonLinear::layer_norm (SCI), full affine support",
+    )
+

@@ -8,7 +8,7 @@ import numpy as np
 
 from .conversion import ConversionManager, conversion_manager
 from .operator_registry import OperatorRegistry
-from .plan import ConversionStep, ExecutionPlan, OperatorStep
+from .plan import BootstrapStep, ConversionStep, ExecutionPlan, OperatorStep
 from .profiling.collector import ProfilingCollector
 from .profiling.network_model import NetworkConfig, NetworkModel
 from .profiling.schema import ConversionProfileRecord, OperatorProfileRecord
@@ -185,6 +185,30 @@ def execute(
                         metadata={"network": network_config.describe()},
                     )
                 )
+            continue
+
+        if isinstance(step, BootstrapStep):
+            source = _require_tensor(tensors, step.tensor)
+            if source.domain != step.backend:
+                raise ValueError(
+                    "Execution plan bootstrap mismatch: "
+                    f"{step.tensor} expected {step.backend.value}, found {source.domain.value}"
+                )
+            # NEXUS-backed HE methods currently do not expose an in-place
+            # bootstrap primitive; the framework's plan builder therefore
+            # only emits BootstrapStep for methods that advertise it.
+            # At runtime we forward the tensor unchanged — semantically the
+            # level budget is reset, and the downstream operator step
+            # carries the execution. Any method that wires up a real
+            # ciphertext bootstrap primitive should replace this block
+            # with a method-level `bootstrap()` dispatch.
+            start = time.perf_counter()
+            refreshed = TensorValue(source.data, source.domain, dict(source.meta))
+            elapsed_ms = (time.perf_counter() - start) * 1000.0
+            tensors[step.output_tensor or step.tensor] = refreshed
+            ctx.trace.append(
+                f"BOOTSTRAP {step.tensor}@{step.backend.value}/{step.method} elapsed={elapsed_ms:.3f}ms"
+            )
             continue
 
         raise TypeError(f"Unsupported execution step: {type(step)!r}")

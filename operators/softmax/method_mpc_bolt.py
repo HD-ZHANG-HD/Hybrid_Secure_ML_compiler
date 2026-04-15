@@ -209,3 +209,20 @@ def run_bert_bolt_softmax_mpc(
             return y
     raise RuntimeError(f"Softmax wrapper failed after retries. Last error: {last_error}")
 
+
+# -- cost signature -----------------------------------------------------------
+
+from operators._cost_signature import OperatorCostSignature, mpc_signature
+
+
+def cost_signature(input_shape, output_shape=None, ctx=None) -> OperatorCostSignature:
+    del ctx
+    out = output_shape if output_shape is not None else input_shape
+    return mpc_signature(
+        "Softmax",
+        input_shape=input_shape,
+        output_shape=out,
+        feasible=True,
+        notes="BOLT_SOFTMAX_BRIDGE: NonLinear::softmax (SCI)",
+    )
+

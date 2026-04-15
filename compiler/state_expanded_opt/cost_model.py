@@ -8,6 +8,12 @@ from compiler.min_cut.profiler_db import Domain, ProfilerDB
 from ir.types import OperatorNode
 
 
+# NOTE (Section B): The authoritative δ_i source is now each method's
+# `cost_signature()` helper (see `operators/_cost_signature.py`). This static
+# dict is retained only as a hard-fallback for legacy tests that wire up the
+# cost model *before* the operator modules are importable (e.g. the min_cut
+# JSON demo). New code MUST NOT rely on it — `level_delta()` below calls
+# `compiler.cost_model.level_delta_for_method` first.
 DEFAULT_LEVEL_DELTAS: Dict[str, int] = {
     "Embedding": 0,
     "Linear_QKV": 1,
@@ -37,6 +43,7 @@ class StateExpandedCostModel:
         default_level_bucket: int = 3,
         default_bootstrap_ms: float = 6.0,
         fallback_level_deltas: Dict[str, int] | None = None,
+        network_profile: "object | None" = None,
     ) -> None:
         self.db = db
         self.default_level_bucket = int(default_level_bucket)
@@ -44,6 +51,10 @@ class StateExpandedCostModel:
         self.fallback_level_deltas = dict(DEFAULT_LEVEL_DELTAS)
         if fallback_level_deltas:
             self.fallback_level_deltas.update(fallback_level_deltas)
+        # NetworkProfile is optional so existing constructors keep working.
+        # When set, per-operator / per-conversion costs rescale
+        # communication according to the target profile.
+        self.network_profile = network_profile
 
     def operator_cost(self, node: OperatorNode, domain: Domain, method: str | None = None) -> OperatorCost:
         estimate = self._estimate_node_cost(node, domain, method=method)
@@ -74,6 +85,25 @@ class StateExpandedCostModel:
     def level_delta(self, node: OperatorNode, domain: Domain, method: str | None = None) -> int:
         if domain != "HE":
             return 0
+        # Preferred source (Section B): the method's cost_signature().
+        try:
+            from compiler.cost_model import default_method_for, level_delta_for_method
+
+            effective_method = method or default_method_for(node.op_type, "HE")
+            if effective_method is not None:
+                dyn = level_delta_for_method(
+                    node.op_type,
+                    effective_method,
+                    node.input_shape,
+                    node.output_shape,
+                )
+                if dyn is not None:
+                    return int(dyn)
+        except Exception:
+            # Never let a method import error kill cost evaluation —
+            # silently fall through to the record-based path below.
+            pass
+        # Next preference: profiler record metadata.
         record = self.db.find_exact_operator_record(node.op_type, "HE", node.input_shape, node.output_shape, method=method)
         if record is not None and "he_level_delta" in record.metadata:
             return int(record.metadata["he_level_delta"])
@@ -83,6 +113,38 @@ class StateExpandedCostModel:
         if node.op_type not in self.fallback_level_deltas:
             raise ValueError(f"Missing HE level delta for op={node.op_type}")
         return int(self.fallback_level_deltas[node.op_type])
+
+    def feasible(
+        self,
+        node: OperatorNode,
+        domain: Domain,
+        method: str | None = None,
+    ) -> bool:
+        """Per-node feasibility (Section D foundation).
+
+        Consults the method's `cost_signature()` and returns its
+        `feasible` flag. MPC methods are always feasible. Unknown
+        methods default to feasible for backwards compatibility.
+        """
+        if domain != "HE":
+            return True
+        try:
+            from compiler.cost_model import cost_signature_for_method, default_method_for
+
+            effective_method = method or default_method_for(node.op_type, "HE")
+            if effective_method is None:
+                return True
+            sig = cost_signature_for_method(
+                node.op_type,
+                effective_method,
+                node.input_shape,
+                node.output_shape,
+            )
+            if sig is None:
+                return True
+            return bool(sig.feasible)
+        except Exception:
+            return True
 
     def max_level(self) -> int:
         return self.default_level_bucket

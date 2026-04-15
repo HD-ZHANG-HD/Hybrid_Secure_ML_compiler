@@ -9,27 +9,24 @@ from typing import Dict, Iterable, List, Literal, Tuple
 from .cost_model import CostModel
 from .profiler_db import Domain
 
-
-@dataclass(frozen=True)
-class OperatorNode:
-    node_id: str
-    op_type: str
-    input_shape: Tuple[int, ...]
-    output_shape: Tuple[int, ...]
-
-
-@dataclass(frozen=True)
-class DataEdge:
-    src: str
-    dst: str
-    tensor_shape: Tuple[int, ...]
-
-
-@dataclass(frozen=True)
-class OperatorGraph:
-    graph_id: str
-    nodes: List[OperatorNode]
-    edges: List[DataEdge]
+# Section C: unify the operator graph types.
+#
+# The min_cut package previously defined its own `OperatorNode`,
+# `DataEdge` and `OperatorGraph` dataclasses that were structurally
+# identical to `ir.types` modulo an `attributes` field. Having two
+# parallel types made it impossible for a single compiler pipeline to
+# consume graphs emitted by the fx frontend and the legacy JSON loader
+# interchangeably, because `isinstance(x, ir.types.OperatorGraph)` was
+# False for min_cut graphs and vice versa.
+#
+# Re-exporting from `ir.types` merges the two:
+# - existing positional-arg constructors in this file still work
+#   (`OperatorNode(node_id, op_type, input_shape, output_shape)` — the
+#   extra `attributes` field has a default).
+# - `isinstance` checks against either module now succeed for both.
+# - every call site that imported from `.domain_assignment` keeps
+#   working without modification.
+from ir.types import DataEdge, OperatorGraph, OperatorNode  # noqa: F401  (re-export)
 
 
 @dataclass(frozen=True)

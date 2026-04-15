@@ -1,0 +1,161 @@
+{
+  "graph_id": "bert_base_encoder_block",
+  "nodes": [
+    {
+      "node_id": "b0_embed",
+      "op_type": "Embedding",
+      "input_shape": [1, 8],
+      "output_shape": [1, 8, 768],
+      "attributes": {
+        "architectural_role": "token_embedding",
+        "hidden_size": 768,
+        "num_attention_heads": 12,
+        "intermediate_size": 3072,
+        "bert_variant": "bert-base"
+      }
+    },
+    {
+      "node_id": "b0_qkv",
+      "op_type": "Linear_QKV",
+      "input_shape": [1, 8, 768],
+      "output_shape": [3, 1, 8, 768],
+      "attributes": {
+        "architectural_role": "self_attention_qkv",
+        "packed_qkv": true,
+        "hidden_size": 768,
+        "num_attention_heads": 12
+      }
+    },
+    {
+      "node_id": "b0_qk",
+      "op_type": "Attention_QK_MatMul",
+      "input_shape": [3, 1, 8, 768],
+      "output_shape": [1, 12, 8, 8],
+      "attributes": {
+        "architectural_role": "self_attention_scores",
+        "packed_qkv": true,
+        "num_attention_heads": 12
+      }
+    },
+    {
+      "node_id": "b0_softmax",
+      "op_type": "Softmax",
+      "input_shape": [1, 12, 8, 8],
+      "output_shape": [1, 12, 8, 8],
+      "attributes": {
+        "architectural_role": "self_attention_probs",
+        "num_attention_heads": 12
+      }
+    },
+    {
+      "node_id": "b0_attn_v",
+      "op_type": "Attention_V_MatMul",
+      "input_shape": [1, 12, 8, 8],
+      "output_shape": [1, 8, 768],
+      "attributes": {
+        "architectural_role": "self_attention_context",
+        "num_attention_heads": 12,
+        "head_dim": 64
+      }
+    },
+    {
+      "node_id": "b0_attn_proj",
+      "op_type": "Out_Projection",
+      "input_shape": [1, 8, 768],
+      "output_shape": [1, 8, 768],
+      "attributes": {
+        "architectural_role": "self_attention_output_projection",
+        "hidden_size": 768
+      }
+    },
+    {
+      "node_id": "b0_attn_add",
+      "op_type": "Residual_Add",
+      "input_shape": [1, 8, 768],
+      "output_shape": [1, 8, 768],
+      "attributes": {
+        "architectural_role": "self_attention_residual",
+        "inputs": 2
+      }
+    },
+    {
+      "node_id": "b0_attn_norm",
+      "op_type": "LayerNorm",
+      "input_shape": [1, 8, 768],
+      "output_shape": [1, 8, 768],
+      "attributes": {
+        "architectural_role": "post_attention_layernorm",
+        "hidden_size": 768
+      }
+    },
+    {
+      "node_id": "b0_ffn1",
+      "op_type": "FFN_Linear_1",
+      "input_shape": [1, 8, 768],
+      "output_shape": [1, 8, 64],
+      "attributes": {
+        "architectural_role": "ffn_expand_proxy",
+        "hidden_size": 768,
+        "out_dim": 64,
+        "bert_base_intermediate_size": 3072
+      }
+    },
+    {
+      "node_id": "b0_gelu",
+      "op_type": "GeLU",
+      "input_shape": [1, 8, 64],
+      "output_shape": [1, 8, 64],
+      "attributes": {
+        "architectural_role": "ffn_activation"
+      }
+    },
+    {
+      "node_id": "b0_ffn2",
+      "op_type": "FFN_Linear_2",
+      "input_shape": [1, 8, 64],
+      "output_shape": [1, 8, 768],
+      "attributes": {
+        "architectural_role": "ffn_contract_proxy",
+        "hidden_size": 64,
+        "out_dim": 768,
+        "bert_base_intermediate_size": 3072
+      }
+    },
+    {
+      "node_id": "b0_ffn_add",
+      "op_type": "Residual_Add",
+      "input_shape": [1, 8, 768],
+      "output_shape": [1, 8, 768],
+      "attributes": {
+        "architectural_role": "ffn_residual",
+        "inputs": 2
+      }
+    },
+    {
+      "node_id": "b0_ffn_norm",
+      "op_type": "LayerNorm",
+      "input_shape": [1, 8, 768],
+      "output_shape": [1, 8, 768],
+      "attributes": {
+        "architectural_role": "post_ffn_layernorm",
+        "hidden_size": 768
+      }
+    }
+  ],
+  "edges": [
+    {"src": "b0_embed", "dst": "b0_qkv", "tensor_shape": [1, 8, 768]},
+    {"src": "b0_qkv", "dst": "b0_qk", "tensor_shape": [3, 1, 8, 768]},
+    {"src": "b0_qk", "dst": "b0_softmax", "tensor_shape": [1, 12, 8, 8]},
+    {"src": "b0_softmax", "dst": "b0_attn_v", "tensor_shape": [1, 12, 8, 8]},
+    {"src": "b0_attn_v", "dst": "b0_attn_proj", "tensor_shape": [1, 8, 768]},
+    {"src": "b0_attn_proj", "dst": "b0_attn_add", "tensor_shape": [1, 8, 768]},
+    {"src": "b0_embed", "dst": "b0_attn_add", "tensor_shape": [1, 8, 768]},
+    {"src": "b0_attn_add", "dst": "b0_attn_norm", "tensor_shape": [1, 8, 768]},
+    {"src": "b0_attn_norm", "dst": "b0_ffn1", "tensor_shape": [1, 8, 768]},
+    {"src": "b0_ffn1", "dst": "b0_gelu", "tensor_shape": [1, 8, 64]},
+    {"src": "b0_gelu", "dst": "b0_ffn2", "tensor_shape": [1, 8, 64]},
+    {"src": "b0_ffn2", "dst": "b0_ffn_add", "tensor_shape": [1, 8, 768]},
+    {"src": "b0_attn_norm", "dst": "b0_ffn_add", "tensor_shape": [1, 8, 768]},
+    {"src": "b0_ffn_add", "dst": "b0_ffn_norm", "tensor_shape": [1, 8, 768]}
+  ]
+}

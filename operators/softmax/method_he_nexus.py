@@ -49,3 +49,34 @@ def run_nexus_softmax_he(
         eps=cfg.eps,
     )
     return run_nexus_softmax_bridge(np.asarray(x, dtype=np.float64), bridge_cfg)
+
+
+# -- cost signature -----------------------------------------------------------
+
+from operators._cost_signature import OperatorCostSignature, he_signature
+
+
+SOFTMAX_HE_LEVEL_DELTA = 8  # exp (1+x/128)^128 + 4 inverse iters
+SOFTMAX_HE_NOTES = "NEXUS softmax: (1+x/128)^128 repeated squaring + 4 inverse iterations"
+
+
+def cost_signature(input_shape, output_shape=None, ctx=None) -> OperatorCostSignature:
+    del ctx
+    out = output_shape if output_shape is not None else input_shape
+    return he_signature(
+        "Softmax",
+        input_shape=input_shape,
+        output_shape=out,
+        level_delta=SOFTMAX_HE_LEVEL_DELTA,
+        bootstrap_supported=False,
+        feasible=True,
+        notes=SOFTMAX_HE_NOTES,
+    )
+
+
+def bootstrap(tensor: np.ndarray, ctx: ExecutionContext | None = None) -> np.ndarray:
+    from operators._cost_signature import BootstrapUnsupportedError
+    raise BootstrapUnsupportedError(
+        "Softmax.method_he_nexus cannot bootstrap in place; "
+        "solver must detour through HE->MPC->HE."
+    )

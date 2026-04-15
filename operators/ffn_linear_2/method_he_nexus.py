@@ -53,3 +53,40 @@ def run_nexus_linear_ffn2_he(
         bias=bias,
     )
     return y
+
+
+# -- cost signature -----------------------------------------------------------
+
+from operators._cost_signature import OperatorCostSignature, bs_product, he_signature
+
+
+FFN_LINEAR2_HE_LEVEL_DELTA = 1
+FFN_LINEAR2_HE_MAX_TOKENS = 4096
+FFN_LINEAR2_HE_NOTES = "NEXUS FFN_Linear_2 reuses FFN_Linear_1 adapter; same contract."
+
+
+def cost_signature(input_shape, output_shape=None, ctx=None) -> OperatorCostSignature:
+    del ctx
+    in_shape = tuple(int(d) for d in input_shape)
+    out_shape = output_shape if output_shape is not None else in_shape
+    feasible = len(in_shape) == 3 and bs_product(in_shape) <= FFN_LINEAR2_HE_MAX_TOKENS
+    notes = FFN_LINEAR2_HE_NOTES if feasible else (
+        f"FFN_Linear_2 HE requires rank-3 [B,S,H] with B*S<={FFN_LINEAR2_HE_MAX_TOKENS}; "
+        f"got shape {in_shape}"
+    )
+    return he_signature(
+        "FFN_Linear_2",
+        input_shape=in_shape,
+        output_shape=out_shape,
+        level_delta=FFN_LINEAR2_HE_LEVEL_DELTA,
+        bootstrap_supported=False,
+        feasible=feasible,
+        notes=notes,
+    )
+
+
+def bootstrap(tensor: np.ndarray, ctx: ExecutionContext | None = None) -> np.ndarray:
+    from operators._cost_signature import BootstrapUnsupportedError
+    raise BootstrapUnsupportedError(
+        "FFN_Linear_2.method_he_nexus cannot bootstrap in place."
+    )

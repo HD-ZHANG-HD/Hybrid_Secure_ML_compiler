@@ -61,3 +61,53 @@ def run_nexus_linear_ffn1_he(
         bias=bias,
     )
     return y
+
+
+# -- cost signature -----------------------------------------------------------
+
+from operators._cost_signature import OperatorCostSignature, bs_product, he_signature
+
+
+FFN_LINEAR1_HE_LEVEL_DELTA = 1  # single row-pack matmul
+FFN_LINEAR1_HE_MAX_TOKENS = 4096
+FFN_LINEAR1_HE_HIDDEN = 768
+FFN_LINEAR1_HE_NOTES = (
+    "NEXUS row-packed FFN_Linear_1: poly_modulus_degree=4096, max B*S<=4096, H=768."
+)
+
+
+def cost_signature(input_shape, output_shape=None, ctx=None) -> OperatorCostSignature:
+    del ctx
+    in_shape = tuple(int(d) for d in input_shape)
+    out_shape = input_shape if output_shape is None else output_shape
+    feasible = True
+    reason = FFN_LINEAR1_HE_NOTES
+    if len(in_shape) != 3 or in_shape[-1] != FFN_LINEAR1_HE_HIDDEN:
+        feasible = False
+        reason = f"FFN_Linear_1 HE requires [B,S,{FFN_LINEAR1_HE_HIDDEN}]; got {in_shape}"
+    elif bs_product(in_shape) > FFN_LINEAR1_HE_MAX_TOKENS:
+        feasible = False
+        reason = (
+            f"FFN_Linear_1 HE requires B*S<={FFN_LINEAR1_HE_MAX_TOKENS}; "
+            f"got {bs_product(in_shape)}"
+        )
+    return he_signature(
+        "FFN_Linear_1",
+        input_shape=in_shape,
+        output_shape=out_shape,
+        level_delta=FFN_LINEAR1_HE_LEVEL_DELTA,
+        bootstrap_supported=False,
+        feasible=feasible,
+        notes=reason,
+        extras={
+            "poly_modulus_degree": 4096,
+            "max_tokens": FFN_LINEAR1_HE_MAX_TOKENS,
+        },
+    )
+
+
+def bootstrap(tensor: np.ndarray, ctx: ExecutionContext | None = None) -> np.ndarray:
+    from operators._cost_signature import BootstrapUnsupportedError
+    raise BootstrapUnsupportedError(
+        "FFN_Linear_1.method_he_nexus cannot bootstrap in place."
+    )

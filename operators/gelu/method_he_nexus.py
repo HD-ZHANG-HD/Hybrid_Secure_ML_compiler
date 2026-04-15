@@ -42,3 +42,38 @@ def run_nexus_gelu_he(
     cfg = cfg or NexusHeGeluConfig()
     bridge_cfg = NexusHeGeluBridgeConfig(clamp_min=cfg.clamp_min, clamp_max=cfg.clamp_max)
     return run_nexus_gelu_bridge(np.asarray(x, dtype=np.float64), bridge_cfg)
+
+
+# -- cost signature -----------------------------------------------------------
+
+from operators._cost_signature import OperatorCostSignature, he_signature
+
+
+GELU_HE_LEVEL_DELTA = 4  # clamp + degree-12 polynomial eval on [-8,8]
+GELU_HE_NOTES = "NEXUS polynomial gelu, clamp [-8,8], bootstrap not supported in-place"
+
+
+def cost_signature(
+    input_shape, output_shape=None, ctx=None
+) -> OperatorCostSignature:
+    """HE GeLU is shape-agnostic but spends ~4 multiplicative levels."""
+    del ctx
+    out = output_shape if output_shape is not None else input_shape
+    return he_signature(
+        "GeLU",
+        input_shape=input_shape,
+        output_shape=out,
+        level_delta=GELU_HE_LEVEL_DELTA,
+        bootstrap_supported=False,
+        feasible=True,
+        notes=GELU_HE_NOTES,
+    )
+
+
+def bootstrap(tensor: np.ndarray, ctx: ExecutionContext | None = None) -> np.ndarray:
+    """NEXUS GeLU bakes the level chain into the primitive — no in-place BS."""
+    from operators._cost_signature import BootstrapUnsupportedError
+    raise BootstrapUnsupportedError(
+        "GeLU.method_he_nexus cannot bootstrap in place; "
+        "solver must detour through HE->MPC->HE."
+    )

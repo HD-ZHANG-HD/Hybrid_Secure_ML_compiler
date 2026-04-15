@@ -1,26 +1,34 @@
+"""Out_Projection MPC method — reuses FFN_Linear_1 BOLT bridge.
+
+Input shape: [B,S,768]  Output shape: [B,S,768]
+
+Delegates to `run_bert_bolt_ffn_linear1_mpc_chunked` with `out_dim=768` so
+that shapes with `n = B*S > 64` are handled transparently.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
 
 import numpy as np
 
+from operators._cost_signature import OperatorCostSignature, bs_product, mpc_signature
 from operators.linear_ffn1.method_mpc_bolt import (
     BertBoltFfnLinear1Config,
     CHUNK_MAX_N,
-    run_bert_bolt_ffn_linear1_mpc,
     run_bert_bolt_ffn_linear1_mpc_chunked,
 )
 from runtime.types import ExecutionContext
 
 
 @dataclass
-class BertBoltFfnLinear2Config:
+class BertBoltOutProjectionConfig:
     ell: int = 37
     scale: int = 12
     nthreads: int = 2
     address: str = "127.0.0.1"
     port: int | None = None
-    weight_seed: int = 2234
+    weight_seed: int = 3334
 
 
 def _log(ctx: ExecutionContext | None, message: str) -> None:
@@ -28,21 +36,20 @@ def _log(ctx: ExecutionContext | None, message: str) -> None:
         ctx.trace.append(message)
 
 
-def run_bert_bolt_ffn_linear2_mpc(
+def run_out_projection_mpc_bolt(
     x: np.ndarray,
-    out_dim: int,
     ctx: ExecutionContext | None = None,
-    cfg: BertBoltFfnLinear2Config | None = None,
+    cfg: BertBoltOutProjectionConfig | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    cfg = cfg or BertBoltFfnLinear2Config()
+    cfg = cfg or BertBoltOutProjectionConfig()
     _log(
         ctx,
-        "[ffn_linear2_wrapper] lowered_to=FFN_Linear_1.method_mpc_bolt "
-        "primitive=NonLinear::n_matrix_mul_iron(...)",
+        "[out_projection_mpc_bolt] lowered_to=FFN_Linear_1.method_mpc_bolt "
+        "primitive=NonLinear::n_matrix_mul_iron (chunked)",
     )
     return run_bert_bolt_ffn_linear1_mpc_chunked(
         np.asarray(x, dtype=np.float64),
-        out_dim=out_dim,
+        out_dim=768,
         ctx=ctx,
         cfg=BertBoltFfnLinear1Config(
             ell=cfg.ell,
@@ -55,23 +62,18 @@ def run_bert_bolt_ffn_linear2_mpc(
     )
 
 
-# -- cost signature -----------------------------------------------------------
-
-from operators._cost_signature import OperatorCostSignature, bs_product, mpc_signature
-
-
 def cost_signature(input_shape, output_shape=None, ctx=None) -> OperatorCostSignature:
     del ctx
     in_shape = tuple(int(d) for d in input_shape)
     out = output_shape if output_shape is not None else in_shape
     n = bs_product(in_shape) if len(in_shape) >= 2 else 1
     return mpc_signature(
-        "FFN_Linear_2",
+        "Out_Projection",
         input_shape=in_shape,
         output_shape=out,
         feasible=True,
         notes=(
-            "BOLT_FFN_LINEAR1_BRIDGE (reused semantically); "
+            "Out_Projection via BOLT_FFN_LINEAR1_BRIDGE; "
             f"chunked in blocks of <= {CHUNK_MAX_N} tokens (n={n})."
         ),
         extras={
